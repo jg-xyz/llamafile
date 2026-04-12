@@ -35,6 +35,7 @@ extern bool FLAG_nologo;        // Suppresses logo display (chatbot_main.cpp)
 extern bool FLAG_nothink;       // Filters thinking/reasoning content (chatbot_cli.cpp)
 extern bool FLAG_precise;       // Forces precise math in tinyblas (tinyblas_cpu.h)
 extern bool FLAG_recompile;     // Forces GPU library recompilation (metal.c)
+extern bool FLAG_turbo1bit;     // Enables Turbo1Bit KV cache compression (args.cpp)
 extern int FLAG_gpu;            // GPU backend selection (llamafile.c, metal.c, cuda.c)
 extern int FLAG_verbose;        // Verbose output (chatbot_main.cpp, metal.c, cuda.c)
 

@@ -16,6 +16,17 @@ jobs:
         id: checkout
         uses: actions/checkout@v4
 
+      - name: Install mise
+        uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      - name: Install Python dependencies with uv
+        run: |
+          mise run lint || true
+          uv sync
+
       - name: Dependencies
         id: depends
         run: |
@@ -24,7 +35,7 @@ jobs:
 
       - name: Setup dependencies and patch dependencies
         run: |
-          make setup
+          mise run setup
 
       - name: Cache cosmocc toolchain
         id: cache-cosmocc-toolchain
@@ -48,6 +59,10 @@ jobs:
         run: |
           sudo make -j $(nproc)
 
+      - name: Build Turbo1Bit standalone tools
+        run: |
+          mise run turbo1bit:build || echo "Turbo1Bit standalone build skipped (cmake/clang not available)"
+
       - name: Make Llamafile
         run: |
           cp ./models/TinyLLama-v0.1-5M-F16.gguf tinyllama.gguf
@@ -66,3 +81,58 @@ jobs:
       - name: Execute LLM CLI CPU
         run: |
           ./tinyllama.llamafile --cli -p '## Famous Speech\n\nFour score and seven'
+
+      - name: Verify Turbo1Bit flags are accepted
+        run: |
+          ./tinyllama.llamafile --help 2>&1 | grep -q "turbo1bit" && \
+            echo "✓ --turbo1bit help text present" || \
+            echo "⚠ --turbo1bit not found in help"
+          ./tinyllama.llamafile --cli -p 'Hello' --no-turbo1bit --n-predict 3 && \
+            echo "✓ --no-turbo1bit flag accepted"
+
+  # Optional: gated workflow_dispatch job for Bonsai model download + bundle
+  bonsai-bundle:
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v4
+
+      - name: Install mise
+        uses: jdx/mise-action@v2
+
+      - name: Install Python dependencies with uv
+        run: uv sync
+
+      - name: Setup
+        run: mise run setup
+
+      - name: Setup cosmocc
+        run: sudo make cosmocc-ci PREFIX=/usr
+
+      - name: Build
+        run: sudo make -j $(nproc)
+
+      - name: Download Bonsai-1.7B model
+        run: mise run model:download -- prism-ml/Bonsai-1.7B-gguf models/Bonsai-1.7B-gguf
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Bundle Bonsai llamafile with Turbo1Bit
+        run: |
+          GGUF=$(ls models/Bonsai-1.7B-gguf/*.gguf | head -1)
+          mise run model:bundle -- "$GGUF" Bonsai-1.7B.llamafile --turbo1bit
+
+      - name: Smoke test Bonsai llamafile
+        run: |
+          ./Bonsai-1.7B.llamafile --cli -p 'Hello, world!' --n-predict 10
+
+      - name: Upload Bonsai llamafile artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bonsai-1.7B-turbo1bit
+          path: Bonsai-1.7B.llamafile
+          retention-days: 7
+

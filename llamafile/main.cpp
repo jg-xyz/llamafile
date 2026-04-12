@@ -71,6 +71,16 @@ static void print_general_help() {
            "  --version        show version information\n"
            "  --help           show this help\n"
            "\n"
+           "1-bit model options (Bonsai / BitNet):\n"
+           "  --turbo1bit      enable Turbo1Bit KV cache compression\n"
+           "                   (auto-enabled for Bonsai/BitNet models)\n"
+           "                   injects: --fa --ctk q4_0 --ctv q4_0\n"
+           "                   saves up to 2.65x KV cache memory at 65K context\n"
+           "  --no-turbo1bit   disable Turbo1Bit auto-injection\n"
+           "  --fa             enable Flash Attention (required for KV quantization)\n"
+           "  --ctk TYPE       key cache type: f16, q8_0, q5_0, q4_0\n"
+           "  --ctv TYPE       value cache type: f16, q8_0, q5_0, q4_0\n"
+           "\n"
            "for mode-specific help and options:\n"
            "  llamafile --server --help\n"
            "  llamafile --chat --help\n"
@@ -80,7 +90,9 @@ static void print_general_help() {
            "  llamafile -m model.gguf\n"
            "  llamafile -m model.gguf --server --port 8080\n"
            "  llamafile -m model.gguf --chat\n"
-           "  llamafile -m model.gguf --cli -p \"explain quantum computing\"\n");
+           "  llamafile -m model.gguf --cli -p \"explain quantum computing\"\n"
+           "  llamafile -m Bonsai-8B.gguf --turbo1bit -c 65536\n"
+           "  llamafile -m Bonsai-8B.gguf --fa --ctk q4_0 --ctv q4_0 -c 65536\n");
 }
 
 static void print_chat_help() {

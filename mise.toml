@@ -1,0 +1,235 @@
+# mise.toml — Development environment and task runner for jg-xyz/llamafile
+# Manages tools and tasks for building llamafile with Bonsai 1-bit LLM support
+# via PrismML llama.cpp, BitNet kernels, and Turbo1Bit KV cache compression.
+#
+# Usage:
+#   mise install        # Install all tools
+#   mise run setup      # Initialize submodules and apply patches
+#   mise run build      # Build llamafile
+#   mise run test       # Run test suite
+
+[env]
+# cosmocc toolchain version (must match build/config.mk)
+COSMOCC_VERSION = "4.0.2"
+COSMOCC = ".cosmocc/4.0.2"
+# Temporary directory for build artifacts
+TMPDIR = "o/tmp"
+# Add cosmocc binaries to PATH after setup
+_.path = [".cosmocc/4.0.2/bin"]
+
+[tools]
+python = "3.11"
+cmake  = "3.31"
+ninja  = "latest"
+# clang >= 18 is required by BitNet kernel compilation
+# (use system clang on CI; install via mise for local dev)
+# clang  = "18"
+
+[tasks.setup]
+description = "Initialize submodules, apply patches, and download cosmocc toolchain"
+run         = "make setup"
+
+[tasks.build]
+description = "Build llamafile with cosmocc (all targets)"
+run         = "make -j$(nproc)"
+depends     = ["setup"]
+
+[tasks."build:debug"]
+description = "Build llamafile in debug mode"
+run         = "make m=dbg -j$(nproc)"
+depends     = ["setup"]
+
+[tasks.clean]
+description = "Remove all build artifacts"
+run         = "rm -rf o/"
+
+[tasks.reset]
+description = "Reset all submodules to their pristine upstream state"
+run         = "make reset-repo"
+
+[tasks.test]
+description = "Run the llamafile test suite"
+run         = "make check"
+depends     = ["build"]
+
+[tasks.lint]
+description = "Run editorconfig lint check"
+run         = """
+  if command -v editorconfig-checker &>/dev/null; then
+    editorconfig-checker
+  else
+    echo 'editorconfig-checker not installed; skipping lint'
+  fi
+"""
+
+[tasks.ci]
+description = "Full CI pipeline: setup → build → test"
+depends     = ["setup", "build", "test"]
+
+[tasks.cuda]
+description = "Build CUDA GPU backend (requires NVIDIA CUDA toolkit)"
+run         = "make cuda"
+depends     = ["setup"]
+
+[tasks.vulkan]
+description = "Build Vulkan GPU backend (requires Vulkan SDK)"
+run         = "make vulkan"
+depends     = ["setup"]
+
+[tasks."model:download"]
+description = """Download Bonsai GGUF models from HuggingFace.
+
+  Usage: mise run model:download [-- MODEL_REPO [OUTPUT_DIR]]
+  Defaults: prism-ml/Bonsai-8B-gguf → models/Bonsai-8B-gguf
+
+  Requires: uv (managed by mise), huggingface_hub in pyproject.toml
+"""
+run = """
+  MODEL_REPO="${1:-prism-ml/Bonsai-8B-gguf}"
+  OUTPUT_DIR="${2:-models/$(basename $MODEL_REPO)}"
+  echo "Downloading $MODEL_REPO → $OUTPUT_DIR"
+  mkdir -p "$OUTPUT_DIR"
+  uv run python -c "
+from huggingface_hub import snapshot_download
+snapshot_download('$MODEL_REPO', local_dir='$OUTPUT_DIR', allow_patterns='*.gguf')
+print('Download complete: $OUTPUT_DIR')
+"
+"""
+
+[tasks."model:convert"]
+description = """Convert a HuggingFace BitNet/Bonsai model to GGUF format.
+
+  Usage: mise run model:convert -- <HF_MODEL_DIR> [--quant i2_s|tl1]
+
+  Steps:
+    1. Convert .safetensors to GGUF (f32)
+    2. Quantize to I2_S format using llama-quantize
+    3. Optionally run platform-specific kernel codegen
+
+  Requires: built llamafile (mise run build), uv with Python deps
+"""
+run = """
+  MODEL_DIR="${1:?Usage: mise run model:convert -- <model_dir> [--quant i2_s]}"
+  QUANT="${3:-i2_s}"
+  python_script="tools/bitnet/setup_env.py"
+  if [ ! -f "$python_script" ]; then
+    echo "Error: $python_script not found. Has the repo been set up?" >&2
+    exit 1
+  fi
+  uv run python "$python_script" --model-dir "$MODEL_DIR" --quant-type "$QUANT"
+"""
+
+[tasks."model:convert:bitnet"]
+description = """Convert a raw HuggingFace BitNet checkpoint (.safetensors) to GGUF.
+
+  Usage: mise run model:convert:bitnet -- <HF_MODEL_DIR>
+
+  This wraps tools/bitnet/convert-hf-to-gguf-bitnet.py and then runs
+  llama-quantize to produce an I2_S GGUF ready for llamafile bundling.
+"""
+run = """
+  MODEL_DIR="${1:?Usage: mise run model:convert:bitnet -- <model_dir>}"
+  GGUF_F32="$MODEL_DIR/ggml-model-f32.gguf"
+  GGUF_I2S="$MODEL_DIR/ggml-model-i2_s.gguf"
+  QUANTIZE_BIN="o//llama.cpp/tools/quantize/llama-quantize"
+
+  echo "Step 1: Converting $MODEL_DIR to GGUF (f32)..."
+  uv run python tools/bitnet/convert-hf-to-gguf-bitnet.py "$MODEL_DIR" --outtype f32
+
+  echo "Step 2: Quantizing to I2_S..."
+  if [ ! -f "$QUANTIZE_BIN" ]; then
+    echo "Error: $QUANTIZE_BIN not found. Run 'mise run build' first." >&2
+    exit 1
+  fi
+  "$QUANTIZE_BIN" "$GGUF_F32" "$GGUF_I2S" I2_S 1
+  echo "Done: $GGUF_I2S"
+"""
+
+[tasks."model:bundle"]
+description = """Bundle a GGUF model into a self-contained llamafile executable.
+
+  Usage: mise run model:bundle -- <model.gguf> [output.llamafile] [--turbo1bit]
+
+  Creates a portable single-file executable that includes the model and
+  default inference flags (--fa --ctk q4_0 --ctv q4_0 for 1-bit models).
+
+  Requires: built llamafile + zipalign (mise run build)
+"""
+run = """
+  MODEL="${1:?Usage: mise run model:bundle -- <model.gguf> [output.llamafile]}"
+  OUTPUT="${2:-$(basename ${MODEL%.gguf}).llamafile}"
+  ENABLE_TURBO="${3:-}"
+  LLAMAFILE_BIN="o//llamafile/llamafile"
+  ZIPALIGN_BIN="o//third_party/zipalign/zipalign"
+  ARGS_FILE=".args.tmp"
+
+  for bin in "$LLAMAFILE_BIN" "$ZIPALIGN_BIN"; do
+    if [ ! -f "$bin" ]; then
+      echo "Error: $bin not found. Run 'mise run build' first." >&2
+      exit 1
+    fi
+  done
+
+  MODEL_BASENAME="$(basename $MODEL)"
+  if [ "$ENABLE_TURBO" = "--turbo1bit" ]; then
+    cat > "$ARGS_FILE" << EOF
+-m
+$MODEL_BASENAME
+--fa
+--ctk
+q4_0
+--ctv
+q4_0
+...
+EOF
+    echo "Bundling with Turbo1Bit KV compression enabled (--fa --ctk q4_0 --ctv q4_0)"
+  else
+    cat > "$ARGS_FILE" << EOF
+-m
+$MODEL_BASENAME
+...
+EOF
+  fi
+
+  cp "$LLAMAFILE_BIN" "$OUTPUT"
+  "$ZIPALIGN_BIN" -j0 "$OUTPUT" "$MODEL" "$ARGS_FILE"
+  rm -f "$ARGS_FILE"
+  echo "Created: $OUTPUT"
+  echo "Run: ./$OUTPUT --cli -p 'Your prompt'"
+"""
+
+[tasks."turbo1bit:build"]
+description = "Build standalone TurboQuant library and benchmark tools (requires cmake + clang)"
+run = """
+  BUILD_DIR="o/turbo1bit-build"
+  mkdir -p "$BUILD_DIR"
+  cmake -B "$BUILD_DIR" -S turbo1bit \
+    -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++
+  ninja -C "$BUILD_DIR"
+  echo "Built: $BUILD_DIR/turbo1bit-bench, $BUILD_DIR/turbo1bit-stress"
+"""
+
+[tasks."turbo1bit:bench"]
+description = """Run the Turbo1Bit benchmark suite against a Bonsai GGUF model.
+
+  Usage: mise run turbo1bit:bench -- <model.gguf> [context_size]
+
+  Reports memory usage at various context lengths with and without
+  KV cache compression, and prefill/decode throughput comparisons.
+"""
+run = """
+  MODEL="${1:?Usage: mise run turbo1bit:bench -- <model.gguf>}"
+  CTX="${2:-8192}"
+  BENCH_BIN="o/turbo1bit-build/turbo1bit-bench"
+
+  if [ ! -f "$BENCH_BIN" ]; then
+    echo "Building turbo1bit-bench first..."
+    mise run turbo1bit:build
+  fi
+
+  echo "=== Turbo1Bit Benchmark: $MODEL at ctx=$CTX ==="
+  "$BENCH_BIN" "$MODEL" "$CTX"
+"""

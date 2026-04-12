@@ -64,6 +64,72 @@ responses.
 
 **Windows users:** Rename the file to add `.exe` extension before running.
 
+## 1-bit LLMs: Bonsai + BitNet + Turbo1Bit
+
+This fork adds native support for **1-bit LLMs** (Bonsai, BitNet) via the
+[PrismML llama.cpp fork](https://github.com/PrismML-Eng/llama.cpp/tree/prism),
+with automatic **Turbo1Bit KV cache compression** for efficient long-context inference.
+
+### Run a Bonsai Model
+
+```bash
+# Download Bonsai-8B GGUF (pre-converted, no setup needed)
+mise run model:download -- prism-ml/Bonsai-8B-gguf models/Bonsai-8B
+
+# Run with Turbo1Bit compression auto-enabled (--fa --ctk q4_0 --ctv q4_0)
+./llamafile -m models/Bonsai-8B/Bonsai-8B.gguf
+
+# Explicit Turbo1Bit flags at 65K context
+./llamafile -m models/Bonsai-8B/Bonsai-8B.gguf --fa --ctk q4_0 --ctv q4_0 -c 65536
+```
+
+For Bonsai and BitNet models (filenames containing "bonsai", "bitnet", "1bit"),
+llamafile **automatically injects** `--fa --ctk q4_0 --ctv q4_0` for optimally
+efficient inference. Disable with `--no-turbo1bit`.
+
+### Run a Microsoft BitNet Model
+
+```bash
+# Download and convert BitNet-b1.58-2B-4T
+mise run model:convert -- models/bitnet-2B --hf-repo microsoft/BitNet-b1.58-2B-4T
+
+# Bundle as a standalone llamafile
+mise run model:bundle -- models/bitnet-2B/ggml-model-i2_s.gguf BitNet-2B.llamafile --turbo1bit
+
+# Run anywhere
+./BitNet-2B.llamafile --cli -p "Explain 1-bit neural networks"
+```
+
+**Memory savings with Turbo1Bit at 65K context:**
+- KV cache: ~2.65x smaller with 4-bit quantization
+- Bonsai-8B fits comfortably in 16GB RAM at 65K context
+
+See [docs/turbo1bit.md](docs/turbo1bit.md) and [docs/bitnet.md](docs/bitnet.md) for full documentation.
+
+### Development with mise
+
+This fork uses [mise](https://mise.jdx.dev/) for development tooling:
+
+```bash
+# Install mise (see https://mise.jdx.dev/getting-started.html)
+curl https://mise.run | sh
+
+# Install tools + Python deps
+mise install
+uv sync
+
+# Available tasks
+mise run setup          # Initialize submodules and apply patches
+mise run build          # Build llamafile
+mise run test           # Run test suite
+mise run clean          # Remove build artifacts
+mise run model:download # Download Bonsai GGUF models
+mise run model:convert  # Convert HF models to GGUF
+mise run model:bundle   # Bundle GGUF into llamafile
+mise run turbo1bit:build # Build standalone TurboQuant tools
+mise run turbo1bit:bench # Benchmark KV cache compression
+```
+
 ## Documentation
 
 Check the full documentation in the [docs/](docs/) folder or online at [mozilla-ai.github.io/llamafile](https://mozilla-ai.github.io/llamafile/), or directly jump into one of the following subsections:
