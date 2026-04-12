@@ -85,13 +85,18 @@ static void grow_compressed(t1b_kv_cache *c, int needed) {
 
     t1b_compressed_key *new_keys = (t1b_compressed_key *)realloc(
         c->comp_keys, new_count * sizeof(t1b_compressed_key));
+    if (!new_keys) {
+        // Keys realloc failed — leave cache unchanged at current capacity
+        return;
+    }
+    // Keys succeeded; now resize values. If values fails, undo the keys realloc.
     t1b_compressed_value *new_values = (t1b_compressed_value *)realloc(
         c->comp_values, new_count * sizeof(t1b_compressed_value));
-
-    if (!new_keys || !new_values) {
-        // Realloc failed — keep old pointers if one succeeded
-        if (new_keys) c->comp_keys = new_keys;
-        if (new_values) c->comp_values = new_values;
+    if (!new_values) {
+        // Values realloc failed — shrink keys back to old size to keep structures consistent
+        t1b_compressed_key *restored = (t1b_compressed_key *)realloc(
+            new_keys, old_count * sizeof(t1b_compressed_key));
+        c->comp_keys = restored ? restored : new_keys;
         return;
     }
 

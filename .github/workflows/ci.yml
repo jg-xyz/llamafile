@@ -95,6 +95,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 60
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Clone
