@@ -26,16 +26,8 @@
 
 namespace lf {
 
-// Global flag definitions (declared extern in llamafile.h)
-bool FLAG_turbo1bit = false;
-
 // Static storage for filtered argv (persists after function returns)
 static std::vector<char*> g_filtered_argv;
-
-// Static storage for injected Turbo1Bit argv arguments
-// Held separately so we can push them before the llama.cpp-visible args.
-static std::vector<std::string> g_turbo1bit_injected_strings;
-static std::vector<char*>       g_turbo1bit_injected_ptrs;
 
 // Helper: returns true if arg is a llamafile-specific flag (not recognized by llama.cpp)
 static bool is_llamafile_flag(const char* arg) {
@@ -89,15 +81,12 @@ static bool argv_has(const std::vector<char*>& argv_vec, const char* flag) {
 }
 
 // Inject a Turbo1Bit flag+value pair into the filtered argv.
-// Stores the string in g_turbo1bit_injected_strings so the char* stays valid.
+// flag and value must be string literals (static lifetime); their char* is
+// stored directly without copying.
 static void inject_flag(std::vector<char*>& dst, const char* flag, const char* value = nullptr) {
     if (!argv_has(dst, flag)) {
-        g_turbo1bit_injected_strings.push_back(flag);
-        dst.push_back(g_turbo1bit_injected_strings.back().data());
-        if (value) {
-            g_turbo1bit_injected_strings.push_back(value);
-            dst.push_back(g_turbo1bit_injected_strings.back().data());
-        }
+        dst.push_back(const_cast<char*>(flag));
+        if (value) dst.push_back(const_cast<char*>(value));
     }
 }
 

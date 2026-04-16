@@ -148,13 +148,15 @@ static void turbo1bit_apply(turbo1bit_state & state, llama_context * ctx, int cu
         // Key compression (only if key_bits >= 2)
         if (state.key_bits >= 2 && l < (int)state.quantizers.size() && state.quantizers[l]) {
             t1b_quantizer *q = state.quantizers[l];
+            int mse_len  = t1b_packed_len(state.head_dim, state.key_bits - 1);
+            int sign_len = t1b_sign_packed_len(state.head_dim);
+            std::vector<uint8_t> mse_buf(mse_len), sign_buf(sign_len);
             for (int h = 0; h < state.n_kv_heads; h++) {
                 float *hd = k_f32.data() + h * state.head_dim;
-                uint8_t mse_buf[256], sign_buf[256];
                 t1b_prod_quantized pq;
                 memset(&pq, 0, sizeof(pq));
-                pq.mse_indices = mse_buf;
-                pq.qjl_signs = sign_buf;
+                pq.mse_indices = mse_buf.data();
+                pq.qjl_signs = sign_buf.data();
                 t1b_quantize_prod(q, hd, &pq);
                 t1b_dequantize_prod(q, &pq, hd);
             }
@@ -203,19 +205,22 @@ static void turbo1bit_apply(turbo1bit_state & state, llama_context * ctx, int cu
                     continue;
                 }
 
-                for (int h = 0; h < state.n_kv_heads; h++) {
-                    float *hd = v_f32.data() + h * state.head_dim;
+                {
                     int gs = state.value_group_size;
                     int ng = state.head_dim / gs;
-                    uint8_t data_buf[256];
-                    float sc[16], zr[16];
-                    t1b_value_quantized vq;
-                    memset(&vq, 0, sizeof(vq));
-                    vq.data = data_buf; vq.scales = sc; vq.zeros = zr;
-                    vq.bits = state.value_bits; vq.d = state.head_dim;
-                    vq.group_size = gs; vq.n_groups = ng;
-                    t1b_quantize_values(hd, state.head_dim, state.value_bits, gs, &vq);
-                    t1b_dequantize_values(&vq, hd);
+                    int data_len = t1b_value_packed_len(state.head_dim, state.value_bits);
+                    std::vector<uint8_t> data_buf(data_len);
+                    std::vector<float> sc(ng), zr(ng);
+                    for (int h = 0; h < state.n_kv_heads; h++) {
+                        float *hd = v_f32.data() + h * state.head_dim;
+                        t1b_value_quantized vq;
+                        memset(&vq, 0, sizeof(vq));
+                        vq.data = data_buf.data(); vq.scales = sc.data(); vq.zeros = zr.data();
+                        vq.bits = state.value_bits; vq.d = state.head_dim;
+                        vq.group_size = gs; vq.n_groups = ng;
+                        t1b_quantize_values(hd, state.head_dim, state.value_bits, gs, &vq);
+                        t1b_dequantize_values(&vq, hd);
+                    }
                 }
 
                 if (v_tensor->type == GGML_TYPE_F16) {

@@ -8,6 +8,7 @@
  */
 
 #include "turbo1bit_kv_cache.h"
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -59,7 +60,9 @@ static int hd_stride(const t1b_kv_cache *c) {
     return c->config.n_heads * c->config.head_dim;
 }
 
-static void alloc_compressed_slot(t1b_kv_cache *c, int token_idx) {
+// Returns true on success; on failure frees any partial allocations for this
+// token and leaves already-allocated prior token slots intact.
+static bool alloc_compressed_slot(t1b_kv_cache *c, int token_idx) {
     int nh = c->config.n_heads;
     for (int h = 0; h < nh; h++) {
         int idx = token_idx * nh + h;
@@ -68,11 +71,44 @@ static void alloc_compressed_slot(t1b_kv_cache *c, int token_idx) {
         c->comp_values[idx].data   = (uint8_t *)calloc(c->val_packed_len, 1);
         c->comp_values[idx].scales = (float *)calloc(c->val_n_groups, sizeof(float));
         c->comp_values[idx].zeros  = (float *)calloc(c->val_n_groups, sizeof(float));
+
+        if (!c->comp_keys[idx].mse_indices || !c->comp_keys[idx].qjl_signs ||
+            !c->comp_values[idx].data || !c->comp_values[idx].scales ||
+            !c->comp_values[idx].zeros) {
+            // Free partial allocations for this head
+            free(c->comp_keys[idx].mse_indices);
+            free(c->comp_keys[idx].qjl_signs);
+            free(c->comp_values[idx].data);
+            free(c->comp_values[idx].scales);
+            free(c->comp_values[idx].zeros);
+            c->comp_keys[idx].mse_indices = NULL;
+            c->comp_keys[idx].qjl_signs   = NULL;
+            c->comp_values[idx].data   = NULL;
+            c->comp_values[idx].scales = NULL;
+            c->comp_values[idx].zeros  = NULL;
+            // Free already-allocated heads for this token
+            for (int hh = 0; hh < h; hh++) {
+                int ii = token_idx * nh + hh;
+                free(c->comp_keys[ii].mse_indices);
+                free(c->comp_keys[ii].qjl_signs);
+                free(c->comp_values[ii].data);
+                free(c->comp_values[ii].scales);
+                free(c->comp_values[ii].zeros);
+                c->comp_keys[ii].mse_indices = NULL;
+                c->comp_keys[ii].qjl_signs   = NULL;
+                c->comp_values[ii].data   = NULL;
+                c->comp_values[ii].scales = NULL;
+                c->comp_values[ii].zeros  = NULL;
+            }
+            return false;
+        }
     }
+    return true;
 }
 
-static void grow_compressed(t1b_kv_cache *c, int needed) {
-    if (c->n_compressed + needed <= c->max_compressed) return;
+// Returns true on success, false on OOM (cache remains unchanged).
+static bool grow_compressed(t1b_kv_cache *c, int needed) {
+    if (c->n_compressed + needed <= c->max_compressed) return true;
 
     int new_max = c->max_compressed * 2;
     if (new_max < c->n_compressed + needed) {
@@ -86,18 +122,17 @@ static void grow_compressed(t1b_kv_cache *c, int needed) {
     t1b_compressed_key *new_keys = (t1b_compressed_key *)realloc(
         c->comp_keys, new_count * sizeof(t1b_compressed_key));
     if (!new_keys) {
-        // Keys realloc failed — leave cache unchanged at current capacity
-        return;
+        return false;
     }
     // Keys succeeded; now resize values. If values fails, undo the keys realloc.
     t1b_compressed_value *new_values = (t1b_compressed_value *)realloc(
         c->comp_values, new_count * sizeof(t1b_compressed_value));
     if (!new_values) {
-        // Values realloc failed — shrink keys back to old size to keep structures consistent
+        // Shrink keys back to old size to keep structures consistent
         t1b_compressed_key *restored = (t1b_compressed_key *)realloc(
             new_keys, old_count * sizeof(t1b_compressed_key));
         c->comp_keys = restored ? restored : new_keys;
-        return;
+        return false;
     }
 
     c->comp_keys = new_keys;
@@ -110,13 +145,15 @@ static void grow_compressed(t1b_kv_cache *c, int needed) {
            (new_count - old_count) * sizeof(t1b_compressed_value));
 
     c->max_compressed = new_max;
+    return true;
 }
 
-static void compress_token(t1b_kv_cache *c, const float *key, const float *value, int comp_idx) {
+// Returns true on success, false on OOM.
+static bool compress_token(t1b_kv_cache *c, const float *key, const float *value, int comp_idx) {
     int nh = c->config.n_heads;
     int hd = c->config.head_dim;
 
-    alloc_compressed_slot(c, comp_idx);
+    if (!alloc_compressed_slot(c, comp_idx)) return false;
 
     for (int h = 0; h < nh; h++) {
         int idx = comp_idx * nh + h;
@@ -139,6 +176,7 @@ static void compress_token(t1b_kv_cache *c, const float *key, const float *value
         t1b_quantize_values(v, hd, c->config.value_bits,
                             c->config.value_group_size, &vq);
     }
+    return true;
 }
 
 // ── Public API ──────────────────────────────────────────────────────
@@ -148,6 +186,15 @@ t1b_kv_cache * t1b_kv_cache_create(const t1b_kv_cache_config *config) {
     if (!c) return NULL;
 
     c->config = *config;
+
+    // Validate that head_dim is evenly divisible by value_group_size.
+    // An uneven split would cause the last group to be incomplete, leading
+    // to out-of-bounds reads/writes in the quantization and packing loops.
+    if (config->value_group_size <= 0 ||
+        config->head_dim % config->value_group_size != 0) {
+        free(c);
+        return NULL;
+    }
 
     // Pre-compute sizes
     c->mse_packed_len = t1b_packed_len(config->head_dim, config->key_bits - 1);
@@ -246,30 +293,27 @@ void t1b_kv_cache_append(t1b_kv_cache *c, const float *key, const float *value) 
     int stride = hd_stride(c);
     int bs = c->config.buffer_size;
 
-    // Add to buffer
-    memcpy(c->buf_keys   + c->n_buffered * stride, key,   stride * sizeof(float));
-    memcpy(c->buf_values + c->n_buffered * stride, value, stride * sizeof(float));
-    c->n_buffered++;
-
-    // Flush if buffer full
-    if (c->n_buffered > bs) {
-        int n_flush = c->n_buffered - bs;
-        grow_compressed(c, n_flush);
-
-        for (int t = 0; t < n_flush; t++) {
-            compress_token(c,
-                           c->buf_keys   + t * stride,
-                           c->buf_values + t * stride,
-                           c->n_compressed + t);
-        }
-        c->n_compressed += n_flush;
-
-        // Shift buffer
-        int remaining = c->n_buffered - n_flush;
-        memmove(c->buf_keys,   c->buf_keys   + n_flush * stride, remaining * stride * sizeof(float));
-        memmove(c->buf_values, c->buf_values + n_flush * stride, remaining * stride * sizeof(float));
+    // Flush the oldest buffered token before writing if buffer is full.
+    // This must happen BEFORE the new write to avoid an out-of-bounds access
+    // on buf_keys/buf_values which are allocated for exactly buffer_size slots.
+    if (c->n_buffered >= bs) {
+        if (!grow_compressed(c, 1)) return; // OOM: drop token
+        if (!compress_token(c, c->buf_keys, c->buf_values, c->n_compressed)) return;
+        c->n_compressed++;
+        int remaining = bs - 1;
+        memmove(c->buf_keys,
+                c->buf_keys   + stride,
+                (size_t)remaining * stride * sizeof(float));
+        memmove(c->buf_values,
+                c->buf_values + stride,
+                (size_t)remaining * stride * sizeof(float));
         c->n_buffered = remaining;
     }
+
+    // Add new token to the end of the buffer (guaranteed n_buffered < bs)
+    memcpy(c->buf_keys   + c->n_buffered * stride, key,   (size_t)stride * sizeof(float));
+    memcpy(c->buf_values + c->n_buffered * stride, value, (size_t)stride * sizeof(float));
+    c->n_buffered++;
 }
 
 void t1b_kv_cache_prefill(t1b_kv_cache *c, const float *keys, const float *values, int seq_len) {
@@ -286,19 +330,23 @@ void t1b_kv_cache_prefill(t1b_kv_cache *c, const float *keys, const float *value
 
     // Compress older tokens, buffer recent ones
     int n_quant = seq_len - bs;
-    grow_compressed(c, n_quant);
+    if (!grow_compressed(c, n_quant)) return; // OOM: leave cache unchanged
 
+    int compressed = 0;
     for (int t = 0; t < n_quant; t++) {
-        compress_token(c,
-                       keys   + t * stride,
-                       values + t * stride,
-                       c->n_compressed + t);
+        if (!compress_token(c,
+                            keys   + t * stride,
+                            values + t * stride,
+                            c->n_compressed + t)) {
+            break; // OOM mid-prefill
+        }
+        compressed++;
     }
-    c->n_compressed += n_quant;
+    c->n_compressed += compressed;
 
     // Copy recent tokens to buffer
-    memcpy(c->buf_keys,   keys   + n_quant * stride, bs * stride * sizeof(float));
-    memcpy(c->buf_values, values + n_quant * stride, bs * stride * sizeof(float));
+    memcpy(c->buf_keys,   keys   + n_quant * stride, (size_t)bs * stride * sizeof(float));
+    memcpy(c->buf_values, values + n_quant * stride, (size_t)bs * stride * sizeof(float));
     c->n_buffered = bs;
 }
 

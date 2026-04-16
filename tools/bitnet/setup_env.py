@@ -86,7 +86,15 @@ ARCH_ALIAS = {
 # ---------------------------------------------------------------------------
 
 def system_info():
-    return platform.system(), ARCH_ALIAS[platform.machine()]
+    machine = platform.machine()
+    arch = ARCH_ALIAS.get(machine)
+    if arch is None:
+        supported = ", ".join(sorted(ARCH_ALIAS.keys()))
+        raise SystemExit(
+            f"Unsupported architecture: {machine!r}. "
+            f"Supported machine strings: {supported}"
+        )
+    return platform.system(), arch
 
 
 def get_model_name(args):

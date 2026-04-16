@@ -102,11 +102,17 @@ def convert(model_dir: str, outtype: str, quant_embd: bool):
         )
         sys.exit(1)
 
-    # Step 1: Convert to f32 GGUF
+    if outtype == "f16":
+        # Convert directly to f16 GGUF
+        logger.info(f"Converting {model_dir} to f16 GGUF...")
+        run([sys.executable, convert_script, model_dir, "--outtype", "f16"])
+        return out_path
+
+    # Step 1: Convert to f32 GGUF (intermediate for quantization)
     logger.info(f"Step 1: Converting {model_dir} to f32 GGUF...")
     run([sys.executable, convert_script, model_dir, "--outtype", "f32"])
 
-    if outtype in ("f32", "f16"):
+    if outtype == "f32":
         return f32_path
 
     # Step 2: Quantize to i2_s / tl1 / tl2

@@ -24,3 +24,4 @@ uv.lock
 # model storage (download via mise run model:download)
 /models/*.gguf
 /models/*/
+.agentjail/
