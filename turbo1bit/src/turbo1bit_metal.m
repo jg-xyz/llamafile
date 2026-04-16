@@ -108,7 +108,17 @@ t1b_metal_ctx * t1b_metal_init(void) {
 
 void t1b_metal_free(t1b_metal_ctx *ctx) {
     if (!ctx) return;
-    // ARC handles Metal object release
+    // ARC does not manage Objective-C objects inside calloc'd C structs.
+    // Nil out each strong reference so ARC releases the Metal objects before free().
+    ctx->device              = nil;
+    ctx->queue               = nil;
+    ctx->library             = nil;
+    ctx->ps_mse_score        = nil;
+    ctx->ps_qjl_score        = nil;
+    ctx->ps_fused_attn       = nil;
+    ctx->ps_dequant_values   = nil;
+    ctx->ps_value_qd_inplace = nil;
+    ctx->ps_matvec           = nil;
     free(ctx);
 }
 

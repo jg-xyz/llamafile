@@ -160,7 +160,6 @@ LlamafileArgs parse_llamafile_args(int argc, char** argv) {
     // Filter out llamafile-specific arguments
     // These are not recognized by llama.cpp and would cause errors
     g_filtered_argv.clear();
-    g_turbo1bit_injected_strings.clear();
 
     for (int i = 0; i < argc; ++i) {
         const char* arg = argv[i];

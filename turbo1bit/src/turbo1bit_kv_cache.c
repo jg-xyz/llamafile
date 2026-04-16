@@ -207,8 +207,10 @@ t1b_kv_cache * t1b_kv_cache_create(const t1b_kv_cache_config *config) {
     if (!c->quantizers) { t1b_kv_cache_free(c); return NULL; }
 
     for (int h = 0; h < config->n_heads; h++) {
-        // Each head in same layer shares the same rotation matrices
-        // (matching Python: seed = 42 + layer_idx * 7)
+        // Each head gets its own quantizer with independent scratch buffers,
+        // but all heads in the same layer use the same seed (layer_idx), so
+        // their rotation matrices are identical in value (matching Python:
+        // seed = 42 + layer_idx * 7). Memory is not shared between heads.
         c->quantizers[h] = t1b_quantizer_create(config->head_dim, config->key_bits, config->layer_idx);
         if (!c->quantizers[h]) { t1b_kv_cache_free(c); return NULL; }
     }

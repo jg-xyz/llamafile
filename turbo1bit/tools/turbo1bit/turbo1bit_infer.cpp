@@ -17,7 +17,7 @@ extern "C" {
 #include "turbo1bit_metal.h"
 }
 
-#include "llama-kv-cache.h"
+#include "llama-kv-cache-accessors.h"
 
 #include <cstdio>
 #include <cstring>

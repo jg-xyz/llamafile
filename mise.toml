@@ -99,7 +99,7 @@ print('Download complete: $OUTPUT_DIR')
 [tasks."model:convert"]
 description = """Convert a HuggingFace BitNet/Bonsai model to GGUF format.
 
-  Usage: mise run model:convert -- <HF_MODEL_DIR> [--quant i2_s|tl1]
+  Usage: mise run model:convert -- <HF_MODEL_DIR> [i2_s|tl1|tl2]
 
   Steps:
     1. Convert .safetensors to GGUF (f32)
@@ -109,8 +109,8 @@ description = """Convert a HuggingFace BitNet/Bonsai model to GGUF format.
   Requires: built llamafile (mise run build), uv with Python deps
 """
 run = """
-  MODEL_DIR="${1:?Usage: mise run model:convert -- <model_dir> [--quant i2_s]}"
-  QUANT="${3:-i2_s}"
+  MODEL_DIR="${1:?Usage: mise run model:convert -- <model_dir> [i2_s|tl1|tl2]}"
+  QUANT="${2:-i2_s}"
   python_script="tools/bitnet/setup_env.py"
   if [ ! -f "$python_script" ]; then
     echo "Error: $python_script not found. Has the repo been set up?" >&2
@@ -213,16 +213,15 @@ run = """
 """
 
 [tasks."turbo1bit:bench"]
-description = """Run the Turbo1Bit benchmark suite against a Bonsai GGUF model.
+description = """Run the Turbo1Bit benchmark suite (quantization quality, throughput, memory).
 
-  Usage: mise run turbo1bit:bench -- <model.gguf> [context_size]
+  Usage: mise run turbo1bit:bench
 
-  Reports memory usage at various context lengths with and without
-  KV cache compression, and prefill/decode throughput comparisons.
+  Reports quantization cosine similarity, compression/decompression throughput,
+  and KV cache memory savings across a range of context lengths.
+  No model file is required — benchmarks run on synthetic data.
 """
 run = """
-  MODEL="${1:?Usage: mise run turbo1bit:bench -- <model.gguf>}"
-  CTX="${2:-8192}"
   BENCH_BIN="o/turbo1bit-build/turbo1bit-bench"
 
   if [ ! -f "$BENCH_BIN" ]; then
@@ -230,6 +229,6 @@ run = """
     mise run turbo1bit:build
   fi
 
-  echo "=== Turbo1Bit Benchmark: $MODEL at ctx=$CTX ==="
-  "$BENCH_BIN" "$MODEL" "$CTX"
+  echo "=== Turbo1Bit Benchmark ==="
+  "$BENCH_BIN"
 """
