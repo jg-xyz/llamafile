@@ -30,9 +30,13 @@ description = "Initialize submodules, apply patches, and download cosmocc toolch
 run         = "make setup"
 
 [tasks.build]
-description = "Build llamafile with cosmocc (all targets)"
-run         = "make -j$(nproc)"
-depends     = ["setup"]
+description = "Reset submodules, setup, and build llamafile with cosmocc (all targets)"
+run         = """
+  make reset-repo
+  make setup
+  rm -f o//llamafile/llamafile
+  make -j$(nproc)
+"""
 
 [tasks."build:debug"]
 description = "Build llamafile in debug mode"
@@ -156,12 +160,18 @@ description = """Bundle a GGUF model into a self-contained llamafile executable.
   Requires: built llamafile + zipalign (mise run build)
 """
 run = """
-  MODEL="${1:?Usage: mise run model:bundle -- <model.gguf> [output.llamafile]}"
-  OUTPUT="${2:-$(basename ${MODEL%.gguf}).llamafile}"
-  ENABLE_TURBO="${3:-}"
+  MODEL="{{arg(i=0, name="model.gguf")}}"
+  OUTPUT="{{arg(i=1, default="")}}"
+  ENABLE_TURBO="{{arg(i=2, default="")}}"
+  if [ -z "$MODEL" ]; then
+    echo "Usage: mise run model:bundle -- <model.gguf> [output.llamafile]" >&2
+    exit 1
+  fi
+  [ -z "$OUTPUT" ] && OUTPUT="$(basename ${MODEL%.gguf}).llamafile"
+  [ -f "$OUTPUT" ] && rm "$OUTPUT"
   LLAMAFILE_BIN="o//llamafile/llamafile"
   ZIPALIGN_BIN="o//third_party/zipalign/zipalign"
-  ARGS_FILE=".args.tmp"
+  ARGS_FILE=".args"
 
   for bin in "$LLAMAFILE_BIN" "$ZIPALIGN_BIN"; do
     if [ ! -f "$bin" ]; then
@@ -175,10 +185,10 @@ run = """
     cat > "$ARGS_FILE" << EOF
 -m
 $MODEL_BASENAME
---fa
---ctk
+-fa
+-ctk
 q4_0
---ctv
+-ctv
 q4_0
 ...
 EOF
@@ -193,7 +203,7 @@ EOF
 
   cp "$LLAMAFILE_BIN" "$OUTPUT"
   "$ZIPALIGN_BIN" -j0 "$OUTPUT" "$MODEL" "$ARGS_FILE"
-  rm -f "$ARGS_FILE"
+  rm -f ".args"
   echo "Created: $OUTPUT"
   echo "Run: ./$OUTPUT --cli -p 'Your prompt'"
 """

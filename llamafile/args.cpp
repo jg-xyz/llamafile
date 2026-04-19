@@ -182,9 +182,9 @@ LlamafileArgs parse_llamafile_args(int argc, char** argv) {
     // --ctk / --ctv set the KV cache tensor types to Q4_0 for ~2.65x
     // memory reduction at 5% perplexity cost (safe for 1-bit models).
     if (FLAG_turbo1bit) {
-        inject_flag(g_filtered_argv, "--fa");
-        inject_flag(g_filtered_argv, "--ctk", "q4_0");
-        inject_flag(g_filtered_argv, "--ctv", "q4_0");
+        inject_flag(g_filtered_argv, "-fa", "on");
+        inject_flag(g_filtered_argv, "-ctk", "q4_0");
+        inject_flag(g_filtered_argv, "-ctv", "q4_0");
     }
 
     // Null-terminate argv array (required by convention)

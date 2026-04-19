@@ -25,3 +25,6 @@ uv.lock
 /models/*.gguf
 /models/*/
 .agentjail/
+
+bonsai.llamafile
+Bonsai-8B*
