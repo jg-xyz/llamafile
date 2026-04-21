@@ -1,0 +1,54 @@
+[project]
+name = "llamafile-bitnet"
+version = "0.1.0"
+description = "llamafile fork with Bonsai 1-bit LLM support via PrismML llama.cpp, BitNet kernels, and Turbo1Bit KV cache compression"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+# Model conversion pipeline (BitNet / Bonsai safetensors → GGUF)
+convert = [
+    "torch>=2.0.0",
+    "transformers>=4.40.0",
+    "sentencepiece>=0.2.0",
+    "protobuf>=3.20.0",
+]
+
+[project.urls]
+Repository = "https://github.com/jg-xyz/llamafile"
+
+[dependency-groups]
+# Core runtime dependencies
+dev = [
+    # HuggingFace model download and repository access
+    "huggingface-hub>=0.23.0",
+    # Numerical operations used by model conversion scripts
+    "numpy>=1.24.0",
+    # GGUF file format reading/writing (vendored from llama.cpp but installable standalone)
+    "gguf>=0.10.0",
+]
+
+# Model conversion dependencies (heavy: includes torch)
+convert = [
+    "torch>=2.0.0",
+    "transformers>=4.40.0",
+    "sentencepiece>=0.2.0",
+    "protobuf>=3.20.0",
+    # The BitNet conversion scripts depend on these llama.cpp conversion requirements:
+    # convert_legacy_llama.txt:
+    "numpy>=1.24.0",
+    # convert_hf_to_gguf.txt (key subset):
+    "huggingface-hub>=0.23.0",
+    "tiktoken>=0.7.0",
+    "tqdm>=4.66.0",
+]
+
+[tool.uv]
+# Use uv for all dependency resolution and venv management.
+# Run scripts with: uv run python <script.py>
+# Install deps with: uv sync [--group convert]
+package = false
+
+[tool.uv.sources]
+# If llama.cpp's gguf-py package is needed from submodule:
+# gguf = { path = "llama.cpp/gguf-py", editable = true }

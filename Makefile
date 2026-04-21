@@ -18,6 +18,7 @@ include llama.cpp/BUILD.mk
 include whisper.cpp/BUILD.mk
 include llamafile/BUILD.mk
 include whisperfile/BUILD.mk
+include turbo1bit/BUILD.mk
 include tests/BUILD.mk
 endif
 

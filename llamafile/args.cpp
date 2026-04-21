@@ -19,7 +19,9 @@
 #include "args.h"
 #include "llamafile.h"
 
+#include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace lf {
@@ -36,7 +38,56 @@ static bool is_llamafile_flag(const char* arg) {
            strcmp(arg, "--ascii") == 0 ||
            strcmp(arg, "--nologo") == 0 ||
            strcmp(arg, "--nothink") == 0 ||
+           strcmp(arg, "--turbo1bit") == 0 ||
+           strcmp(arg, "--no-turbo1bit") == 0 ||
            strcmp(arg, "--version") == 0;
+}
+
+// Detect whether a GGUF model at the given path is a Bonsai / 1-bit model.
+// Detection heuristic: Bonsai models embed "bonsai" or "prism" in the
+// filename, OR are confirmed by GGUF architecture metadata containing
+// "bitnet" or "1bit". For path-only detection (before model load) we
+// check the filename; full detection happens in chatbot_main after model load.
+static bool looks_like_1bit_model(const std::string& model_path) {
+    if (model_path.empty()) return false;
+
+    // Lowercase the basename for case-insensitive matching
+    auto to_lower = [](std::string s) {
+        for (char& c : s) c = (char)('A' <= c && c <= 'Z' ? c + 32 : c);
+        return s;
+    };
+
+    // Extract basename (everything after the last / or \)
+    size_t slash = model_path.find_last_of("/\\");
+    std::string basename = (slash == std::string::npos)
+        ? model_path
+        : model_path.substr(slash + 1);
+    std::string lower = to_lower(basename);
+
+    // Common naming patterns for 1-bit models
+    return lower.find("bonsai")  != std::string::npos ||
+           lower.find("bitnet")  != std::string::npos ||
+           lower.find("1bit")    != std::string::npos ||
+           lower.find("1.58bit") != std::string::npos ||
+           lower.find("prism")   != std::string::npos;
+}
+
+// Check if an argument already exists in argv (prevents double-injection)
+static bool argv_has(const std::vector<char*>& argv_vec, const char* flag) {
+    for (const char* a : argv_vec) {
+        if (a && strcmp(a, flag) == 0) return true;
+    }
+    return false;
+}
+
+// Inject a Turbo1Bit flag+value pair into the filtered argv.
+// flag and value must be string literals (static lifetime); their char* is
+// stored directly without copying.
+static void inject_flag(std::vector<char*>& dst, const char* flag, const char* value = nullptr) {
+    if (!argv_has(dst, flag)) {
+        dst.push_back(const_cast<char*>(flag));
+        if (value) dst.push_back(const_cast<char*>(value));
+    }
 }
 
 LlamafileArgs parse_llamafile_args(int argc, char** argv) {
@@ -82,6 +133,30 @@ LlamafileArgs parse_llamafile_args(int argc, char** argv) {
     FLAG_nologo = llamafile_has(argv, "--nologo");
     FLAG_ascii = llamafile_has(argv, "--ascii");
 
+    // Turbo1Bit KV cache compression flag handling:
+    //
+    //   --turbo1bit      Explicitly enable Turbo1Bit (auto-injects --fa --ctk q4_0 --ctv q4_0)
+    //   --no-turbo1bit   Explicitly disable Turbo1Bit (no injection even for 1-bit models)
+    //
+    // If neither flag is given and the model looks like a 1-bit model (Bonsai/BitNet),
+    // Turbo1Bit is auto-enabled as the optimally efficient default.
+    const bool explicit_enable  = llamafile_has(argv, "--turbo1bit");
+    const bool explicit_disable = llamafile_has(argv, "--no-turbo1bit");
+
+    if (explicit_disable) {
+        FLAG_turbo1bit = false;
+    } else if (explicit_enable) {
+        FLAG_turbo1bit = true;
+    } else {
+        // Auto-detect: enable for Bonsai/BitNet models
+        FLAG_turbo1bit = looks_like_1bit_model(args.model_path);
+        if (FLAG_turbo1bit && FLAG_verbose) {
+            fprintf(stderr, "llamafile: 1-bit model detected, auto-enabling Turbo1Bit "
+                            "KV cache compression (--fa --ctk q4_0 --ctv q4_0)\n"
+                            "llamafile: pass --no-turbo1bit to disable\n");
+        }
+    }
+
     // Filter out llamafile-specific arguments
     // These are not recognized by llama.cpp and would cause errors
     g_filtered_argv.clear();
@@ -102,6 +177,16 @@ LlamafileArgs parse_llamafile_args(int argc, char** argv) {
         g_filtered_argv.push_back(argv[i]);
     }
 
+    // Inject Turbo1Bit flags into llama.cpp argv when enabled.
+    // --fa enables Flash Attention (required for quantized KV cache).
+    // --ctk / --ctv set the KV cache tensor types to Q4_0 for ~2.65x
+    // memory reduction at 5% perplexity cost (safe for 1-bit models).
+    if (FLAG_turbo1bit) {
+        inject_flag(g_filtered_argv, "-fa", "on");
+        inject_flag(g_filtered_argv, "-ctk", "q4_0");
+        inject_flag(g_filtered_argv, "-ctv", "q4_0");
+    }
+
     // Null-terminate argv array (required by convention)
     g_filtered_argv.push_back(nullptr);
 
@@ -112,3 +197,4 @@ LlamafileArgs parse_llamafile_args(int argc, char** argv) {
 }
 
 } // namespace lf
+

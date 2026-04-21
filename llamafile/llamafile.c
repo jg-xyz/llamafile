@@ -434,6 +434,7 @@ bool FLAG_nologo = false;
 bool FLAG_nothink = false;
 bool FLAG_precise = false;
 bool FLAG_recompile = false;
+bool FLAG_turbo1bit = false;
 int FLAG_gpu = LLAMAFILE_GPU_AUTO;
 int FLAG_verbose = 0;
 

@@ -20,3 +20,11 @@ CLAUDE.md
 *.pyc
 __init__.py
 uv.lock
+
+# model storage (download via mise run model:download)
+/models/*.gguf
+/models/*/
+.agentjail/
+
+bonsai.llamafile
+Bonsai-8B*
