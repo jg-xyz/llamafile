@@ -128,7 +128,7 @@ static void cleanup(mtmd_context *mtmd_ctx, common_sampler *sampler,
     if (model) llama_model_free(model);
 }
 
-int cli_main(int argc, char **argv) {
+int cli_main(int argc, char **argv, const std::string &system_prompt) {
     signal(SIGPIPE, SIG_IGN);
 
     // Parse flags quietly (no logo, no ephemeral messages)
@@ -162,6 +162,10 @@ int cli_main(int argc, char **argv) {
         fprintf(stderr, "error: --cli mode requires -p \"prompt\"\n");
         return 1;
     }
+
+    // Apply config-file system prompt if not already set by CLI (--system-prompt / -sp)
+    if (!system_prompt.empty() && params.system_prompt.empty())
+        params.system_prompt = system_prompt;
 
     // GPU layers default
     if (llamafile_has_metal() && params.n_gpu_layers < 0) {

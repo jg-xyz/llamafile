@@ -83,8 +83,10 @@ int main(int argc, char **argv);
 int api_main(const std::string &server_url, const std::string &system_prompt,
              const std::string &model_path, std::function<void()> shutdown_fn);
 
-// CLI mode: single prompt -> response, then exit
-int cli_main(int argc, char **argv);
+// CLI mode: single prompt -> response, then exit.
+// system_prompt overrides params.system_prompt when non-empty (used to inject
+// config-file system prompts without re-parsing argv).
+int cli_main(int argc, char **argv, const std::string &system_prompt = {});
 
 // Backend factories
 std::unique_ptr<ChatBackend> create_direct_backend();

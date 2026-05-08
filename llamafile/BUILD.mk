@@ -128,6 +128,7 @@ LLAMAFILE_SRCS_C := \
 
 LLAMAFILE_SRCS_CPP := \
 	llamafile/args.cpp \
+	llamafile/config.cpp \
 	llamafile/chatbot_api.cpp \
 	llamafile/chatbot_cli.cpp \
 	llamafile/chatbot_comm.cpp \

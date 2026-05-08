@@ -17,6 +17,7 @@
 // limitations under the License.
 
 #include "args.h"
+#include "config.h"
 #include "llamafile.h"
 
 #include <cstdio>
@@ -157,6 +158,51 @@ LlamafileArgs parse_llamafile_args(int argc, char** argv) {
         }
     }
 
+    // Load config file and resolve mode-specific settings.
+    // CLI args take precedence: config values are only injected if the
+    // corresponding flag is not already present in argv.
+    {
+        // Check for --config [PATH]: if PATH is omitted, print template and exit.
+        // If PATH is provided, load from that file instead of the default location.
+        LlamafileConfig cfg;
+        bool found_config_flag = false;
+        for (int i = 1; i < argc; ++i) {
+            if (strcmp(argv[i], "--config") != 0) continue;
+            found_config_flag = true;
+            // Next arg is the path only if it doesn't start with '-' and exists
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                cfg = load_config_from(argv[i + 1]);
+            } else {
+                print_config_template();  // exits
+            }
+            break;
+        }
+        if (!found_config_flag)
+            cfg = load_config();
+        std::string mode_name;
+        switch (args.mode) {
+            case ProgramMode::CLI:    mode_name = "cli";    break;
+            case ProgramMode::CHAT:   mode_name = "chat";   break;
+            case ProgramMode::SERVER: mode_name = "server"; break;
+            case ProgramMode::AUTO:   mode_name = "auto";   break;
+        }
+        args.mode_config = resolve_mode_config(cfg, mode_name);
+
+        // If no -p/--prompt was given on the CLI, use the config system prompt.
+        bool cli_has_prompt = false;
+        for (int i = 0; i < argc; ++i) {
+            if ((strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--prompt") == 0) && i + 1 < argc) {
+                cli_has_prompt = true;
+                break;
+            }
+        }
+        if (!cli_has_prompt) {
+            std::string cfg_prompt = resolve_system_prompt(args.mode_config);
+            if (!cfg_prompt.empty())
+                args.system_prompt = cfg_prompt;
+        }
+    }
+
     // Filter out llamafile-specific arguments
     // These are not recognized by llama.cpp and would cause errors
     g_filtered_argv.clear();
@@ -173,8 +219,37 @@ LlamafileArgs parse_llamafile_args(int argc, char** argv) {
             continue;
         }
 
+        // --config [PATH]: skip flag and optional path argument
+        if (strcmp(arg, "--config") == 0) {
+            if (i + 1 < argc && argv[i + 1][0] != '-')
+                ++i;
+            continue;
+        }
+
         // Keep this argument
         g_filtered_argv.push_back(argv[i]);
+    }
+
+    // Inject config-derived inference parameter flags (only for unset params).
+    inject_config_flags(g_filtered_argv, args.mode_config, argc, argv);
+
+    // For chat/auto/server modes: inject -p <system_prompt> from config when
+    // the caller didn't supply -p on the CLI. CLI mode handles system_prompt
+    // separately via cli_main()'s explicit parameter.
+    if (args.mode != ProgramMode::CLI && !args.system_prompt.empty()) {
+        bool has_p = false;
+        for (int i = 0; i < argc; ++i) {
+            if ((strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--prompt") == 0) && i + 1 < argc) {
+                has_p = true;
+                break;
+            }
+        }
+        if (!has_p) {
+            static std::vector<std::string> g_prompt_storage;
+            g_prompt_storage.push_back(args.system_prompt);
+            g_filtered_argv.push_back(const_cast<char*>("-p"));
+            g_filtered_argv.push_back(const_cast<char*>(g_prompt_storage.back().c_str()));
+        }
     }
 
     // Inject Turbo1Bit flags into llama.cpp argv when enabled.

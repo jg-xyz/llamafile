@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "config.h"
 #include <string>
 
 namespace lf {
@@ -44,6 +45,10 @@ struct LlamafileArgs {
 
     // Model path captured from -m (for display in combined mode TUI)
     std::string model_path;
+
+    // Resolved config for the selected mode (from ~/.config/llamafile/llamafile.yaml).
+    // CLI args take precedence over config values.
+    ModeConfig mode_config;
 
     // Note: Llamafile-specific flags are stored in FLAG_* globals (llamafile.h):
     //   --verbose  -> FLAG_verbose

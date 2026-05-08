@@ -69,6 +69,8 @@ static void print_general_help() {
            "  -ngl N           number of layers to offload to GPU (default: auto)\n"
            "  --verbose        enable verbose logging\n"
            "  --version        show version information\n"
+           "  --config [FILE]  load config from FILE (default: ~/.config/llamafile/llamafile.yaml)\n"
+           "                   omit FILE to print an annotated config template\n"
            "  --help           show this help\n"
            "\n"
            "1-bit model options (Bonsai / BitNet):\n"
@@ -333,7 +335,7 @@ int main(int argc, char **argv) {
 
         case lf::ProgramMode::CLI:
             // Single prompt -> response mode
-            return lf::chatbot::cli_main(args.llama_argc, args.llama_argv);
+            return lf::chatbot::cli_main(args.llama_argc, args.llama_argv, args.system_prompt);
 
         case lf::ProgramMode::AUTO:
             // Combined mode: server on main thread, TUI as HTTP client on background thread
